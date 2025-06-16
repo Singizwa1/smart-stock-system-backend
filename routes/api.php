@@ -23,15 +23,31 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // Admin only routes
-    Route::middleware('role:Admin')->group(function () {
+    Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/Admin/users', [UserController::class, 'index']);
         Route::get('stock-conditions/all', [StockConditionController::class, 'getAllStockConditions']);
         Route::post('/admin/create-farmer', [AuthController::class, 'createFarmer']);
+
+        //assignRoleToUser
+        Route::post('/admin/assign-role', [AuthController::class, 'assignRoleToUser']);
+        Route::get('/admin/user-roles/{userId}', [AuthController::class, 'getUserRoles']); // Add this new route
+        Route::put('/admin/update/{id}', [AuthController::class, 'updateFarmer']);
     });
 
-    Route::middleware(['auth:sanctum', 'role:Admin'])->group(function () {
+    Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/users', [UserController::class, 'index']);
         Route::post('/users', [UserController::class, 'store']);
         Route::get('/roles', [UserController::class, 'getRoles']);
     });
+
+//  Route::middleware(['auth:sanctum', 'role:Admin'])->group(function () {
+//     Route::get('/users', [UserController::class, 'index']);
+//     Route::post('/users', [UserController::class, 'store']);
+//     Route::get('/roles', [UserController::class, 'getRoles']);
+// });
+
+// Route::middleware(['auth:sanctum', 'role:Farmer'])->group(function () {
+//     Route::get('/stocks', [StockConditionController::class, 'getStocks']);
+// });
+
 });

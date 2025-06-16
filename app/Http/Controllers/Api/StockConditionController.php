@@ -11,30 +11,43 @@ use App\Models\User;
 
 class StockConditionController extends Controller
 {
-    private const FARMER_ROLE = 'farmer';
+    private const FARMER_ROLE = 'Farmer';
     private const ADMIN_ROLE = 'Admin';
 
-    public function index()
-    {
+   public function index()
+{
+    try {
         /** @var User $user */
         $user = Auth::user();
 
         if ($this->isFarmer($user)) {
-            // Return paginated data for farmers
-            return StockCondition::where('user_id', $user->id)
-                ->with('user')
-                ->orderBy('created_at', 'desc')
-                ->paginate(10);
+            // Return paginated data for farmers with JSON formatting
+            return response()->json([
+                'success' => true,
+                'data' => StockCondition::where('user_id', $user->id)
+                    ->with('user')
+                    ->orderBy('created_at', 'desc')
+                    ->paginate(10)
+            ]);
         }
 
-        // Admin gets summary
+        // Admin gets summary, formatted as JSON
         return response()->json([
+            'success' => true,
             'total_users' => StockCondition::distinct('user_id')->count('user_id'),
             'avg_temperature' => round(StockCondition::avg('temperature'), 2),
             'avg_humidity' => round(StockCondition::avg('humidity'), 2),
             'latest_condition' => StockCondition::latest()->with('user')->first(),
         ]);
+    } catch (\Exception $e) {
+        Log::error('Error fetching stock data: ' . $e->getMessage());
+
+        return response()->json([
+            'success' => false,
+            'message' => 'An error occurred while retrieving stock data.'
+        ], 500);
     }
+}
 
     public function show(StockCondition $stockCondition)
     {
@@ -94,13 +107,12 @@ class StockConditionController extends Controller
             ];
 
             $stock = StockCondition::create($stockData);
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $stock,
                 'message' => 'Stock condition created successfully'
             ], 201);
-
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
@@ -127,7 +139,7 @@ class StockConditionController extends Controller
         }
     }
 
-    public function update(Request $request, StockCondition $stockCondition)
+     public function update(Request $request, StockCondition $stockCondition)
     {
         /** @var User $user */
         $user = Auth::user();
@@ -152,7 +164,6 @@ class StockConditionController extends Controller
         $stockCondition->update($data);
         return $stockCondition;
     }
-
     public function destroy(StockCondition $stockCondition)
     {
         /** @var User $user */
@@ -171,7 +182,7 @@ class StockConditionController extends Controller
     {
         try {
             $user = Auth::user();
-            
+
             // Log attempt
             Log::info('Attempting to fetch all stocks', ['user_id' => $user->id]);
 
@@ -196,7 +207,6 @@ class StockConditionController extends Controller
                 'count' => $stockConditions->count(),
                 'message' => 'Stock conditions retrieved successfully'
             ]);
-
         } catch (\Exception $e) {
             Log::error('Failed to fetch stock conditions:', [
                 'error' => $e->getMessage(),
@@ -232,54 +242,75 @@ class StockConditionController extends Controller
 
     public function getStocks()
     {
-        $user = Auth::user();
-        $query = StockCondition::with('user');
-        
-        if ($this->isFarmer($user)) {
-            $query->where('user_id', $user->id);
-        }
-        
-        return response()->json([
-            'success' => true,
-            'data' => $query->orderBy('created_at', 'desc')->get()
-        ]);
-    }
-
-    public function createStock(Request $request)
-    {
         try {
-            $data = $request->validate([
-                'bean_type' => 'required|string|max:255',
-                'quantity' => 'required|numeric|min:0',
-                'temperature' => 'required|numeric',
-                'humidity' => 'required|numeric|min:0|max:100',
-                'status' => 'required|string|in:Good,Warning,Critical',
-                'location' => 'required|string|max:255',
-                'air_condition' => 'required|string|max:255',
-                'action_taken' => 'nullable|string'
-            ]);
+            $user = Auth::user();
+            $query = StockCondition::with('user');
 
-            $stock = new StockCondition();
-            $stock->fill($data);
-            $stock->user_id = Auth::id();
-            $stock->last_updated = now();
-            $stock->save();
+            // Farmers can only see their own stocks
+            if ($this->isFarmer($user)) {
+                $query->where('user_id', $user->id);
+            }
+
+            $stocks = $query->orderBy('created_at', 'desc')->get();
 
             return response()->json([
                 'success' => true,
-                'data' => $stock->fresh(),
-                'message' => 'Stock created successfully'
-            ], 201);
-
+                'data' => $stocks,
+                'message' => 'Stocks retrieved successfully'
+            ]);
         } catch (\Exception $e) {
-            Log::error('Stock creation error:', ['error' => $e->getMessage(), 'data' => $request->all()]);
+            Log::error('Error fetching stocks: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to create stock',
-                'error' => $e->getMessage()
+                'message' => 'An error occurred while retrieving stocks'
             ], 500);
         }
     }
+
+
+    public function createStock(Request $request)
+{
+    try {
+        $user = Auth::user();
+        
+        if (!$this->isFarmer($user) && !$this->isAdmin($user)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized to create stocks'
+            ], 403);
+        }
+
+        $data = $request->validate([
+            'bean_type' => 'required|string|max:255',
+            'quantity' => 'required|numeric|min:0',
+            'temperature' => 'required|numeric',
+            'humidity' => 'required|numeric|min:0|max:100',
+            'status' => 'required|string|in:Good,Warning,Critical',
+            'location' => 'required|string|max:255',
+            'air_condition' => 'required|string|max:255',
+            'action_taken' => 'nullable|string'
+        ]);
+
+        $stock = StockCondition::create([
+            ...$data,
+            'user_id' => $user->id,
+            'last_updated' => now()
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $stock,
+            'message' => 'Stock created successfully'
+        ], 201);
+    } catch (\Exception $e) {
+        Log::error('Stock creation error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to create stock'
+        ], 500);
+    }
+}
+
 
     public function getStock($id)
     {
@@ -334,22 +365,38 @@ class StockConditionController extends Controller
 
     public function deleteStock($id)
     {
-        $user = Auth::user();
-        $stock = StockCondition::find($id);
+        try {
+            $user = Auth::user();
+            $stock = StockCondition::find($id);
 
-        if (!$stock || (!$this->isAdmin($user) && $stock->user_id !== $user->id)) {
+            if (!$stock) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Stock not found'
+                ], 404);
+            }
+
+            // Check if user is authorized to delete the stock
+            if (!$this->isAdmin($user) && $stock->user_id !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized to delete this stock'
+                ], 403);
+            }
+
+            $stock->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Stock deleted successfully'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Stock deletion error: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Stock not found'
-            ], 404);
+                'message' => 'Failed to delete stock'
+            ], 500);
         }
-
-        $stock->delete();
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Stock deleted successfully'
-        ]);
     }
 
     protected function isFarmer(User $user): bool
